@@ -63,7 +63,8 @@ you can find the example in `tests/1`.
 ## How to use
 
 If a file (typically a header) requires some other files, you add a
-`#pragma RcB2 DEP "file1.c" "file2.c"`. Globs are supported to.
+`#pragma RcB2 DEP "../src/file1.c" "lib/file2.c"`. Globs are supported too.
+All path components need to be relative to the file containing the pragma.
 
 If a .c file requires certain CFLAGS for compilation, e.g. `-std=c99`, you can
 add `#pragma RcB2 CFLAGS "-std=c99"`.
@@ -76,8 +77,8 @@ quotes, and it would work, but it is advised to specify each library separately.
 RcB2 drops duplicates to keep the compiler command line as short as possible.
 The `LINK` directive is an alias for `LDFLAGS`.
 
-The pragmas can be put between precompiler `#if`s and `#ifdef`s. Only those that
-survive the preprocessor pass are being picked up.
+The pragmas can be put between preprocessor `#if`s and `#ifdef`s.
+Only those that survive the preprocessor pass are being picked up.
 
 After all headers have the dependencies on the .c files they depend on properly
 documented, it's sufficient to simply include a header, and run `rcb2` on the
