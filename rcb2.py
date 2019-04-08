@@ -48,7 +48,7 @@ def append_trailing_directory_slash(path):
 
 def make_relative(basepath, relpath):
 	if basepath[0] != '/' or relpath[0] != '/':
-		die("error: both path's must start with / (got %s,%s)"%(basepath, relpath))
+		die("error: both paths must start with / (got %s,%s)"%(basepath, relpath))
 	basepath = append_trailing_directory_slash(basepath)
 	relpath = append_trailing_directory_slash(relpath)
 	l = 0
@@ -71,7 +71,7 @@ def make_relative(basepath, relpath):
 		i += 1
 	return res
 
-def printc(color, text):
+def printc(color, text, file=sys.stdout):
 	if not use_color:
 		sys.stdout.write(text)
 		return
@@ -88,13 +88,13 @@ def printc(color, text):
 		"end" : 0
 	}
 	colstr = "\033[%dm"
-	sys.stdout.write( "%s%s%s" % (colstr%cols[color], text, colstr%cols['end']) )
+	file.write( "%s%s%s" % (colstr%cols[color], text, colstr%cols['end']) )
 
-def v_printc(color, text):
-	if verbose: printc(color, text)
+def v_printc(color, text, file=sys.stdout):
+	if verbose: printc(color, text, file)
 
 def die(msg):
-	printc('red', msg)
+	printc('red', msg, file=sys.stderr)
 	sys.exit(1)
 
 def shellcmd(cmd):
@@ -106,8 +106,8 @@ def shellcmd(cmd):
 def compile(cmdline):
 	printc ("magenta", "[CC] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
+	sys.stdout.write(out)
 	if ec: die("ERROR %d: %s"%(ec, err))
-	print out
 	return out
 
 def preprocess(file):
@@ -118,7 +118,6 @@ def preprocess(file):
 	printc ("magenta", "[CPP] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
 	if ec: die("ERROR %d: %s"%(ec, err))
-	#print out
 	return out
 
 def strip_file_ext(fn):
@@ -211,18 +210,35 @@ def scanfile(path, file):
 		elif tag.type == 'CPPFLAGS':
 			for dep in tag.vals:
 				set_flags('cppflags', dep)
+		else:
+			printc ("yellow", "warning: unknown tag %s found in %s\n"%(tag.type, curr_cpp_file))
 
+def usage():
+	print "%s [options] file.c"%sys.argv[0]
+	print "builds file.c"
+	print "options:"
+	print "-v/--verbose: verbose output"
+	print "-c/--nocolor: do not use colors"
+	print "-e/--extension EXT: file extension EXT for the generated binary"
+	print "-j N: write a makefile and build with N parallel jobs"
+	print
+	print "influential environment vars:"
+	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS"
+	sys.exit(1)
 
 def main():
 	nprocs = 1
 	ext = ''
 	global verbose
 	global use_color
-	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:vc", ['verbose', 'nocolor', 'extension='])
+	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:vc", [
+		'extension=','verbose', 'nocolor', 'help'
+	])
 	for a,b in optlist:
 		if a == '-v' or a == '--verbose': verbose = True
 		if a == '-c' or a == '--nocolor': use_color = False
 		if a == '-e' or a == '--extension': ext = b
+		if a == '--help': usage()
 		if a == '-j' : nprocs = int(b)
 
 	setup_env()
@@ -232,7 +248,7 @@ def main():
 	cnd = strip_file_ext(basename(mainfile))
 	bin = cnd + ext
 
-	printc ("blue",  "[RcB] scanning deps...")
+	printc ("blue",  "[RcB2] scanning deps...\n")
 
 	scanfile( dirname(abspath(mainfile)), basename(mainfile) );
 
