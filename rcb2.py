@@ -106,9 +106,7 @@ def shellcmd(cmd):
 def compile(cmdline):
 	printc ("magenta", "[CC] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
-	if ec:
-		printc("red", "ERROR %d: %s"%(ec, err))
-		sys.exit(1)
+	if ec: die("ERROR %d: %s"%(ec, err))
 	print out
 	return out
 
@@ -119,9 +117,7 @@ def preprocess(file):
 	cmdline = "%s %s %s %s %s" % (cpp, get_flags('cflags'), get_flags('cppflags'), cpp_opts, file)
 	printc ("magenta", "[CPP] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
-	if ec:
-		printc("red", "ERROR %d: %s"%(ec, err))
-		sys.exit(1)
+	if ec: die("ERROR %d: %s"%(ec, err))
 	#print out
 	return out
 
@@ -139,8 +135,7 @@ class Tag(object):
 			if len(vals[i]) >= 2 and vals[i][0] == '"':
 				vals[i] = strip_quotes(vals[i])
 			else:
-				printc("red", "syntax error: rcb values need to be enclosed in double quotes")
-				sys.exit(1)
+				die("syntax error: rcb values need to be enclosed in double quotes")
 
 def parse_tag(line):
 	if len(line) >= 15 and line.startswith('#pragma RcB2 '):
