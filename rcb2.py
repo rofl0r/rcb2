@@ -6,7 +6,7 @@ import sys, os, subprocess, glob, collections, getopt
 verbose = False
 use_color = True
 cc = 'cc'
-cpp = 'cc'
+cpp = 'cc -E'
 cdeps = dict()
 flags_dict = dict()
 def get_flags(name):
@@ -29,9 +29,10 @@ def setup_env():
 		bigf = f.upper()
 		if bigf in os.environ: set_flags(f, os.environ[bigf])
 	global cc
+	global cpp
 	if 'CC' in os.environ: cc = os.environ['CC']
 	if 'CPP' in os.environ:	cpp = os.environ['CPP']
-	else: cpp = cc
+	else: cpp = "%s -E"%cc
 
 def abspath(path):
 	return os.path.abspath(path)
@@ -112,9 +113,7 @@ def compile(cmdline):
 
 def preprocess(file):
 	global cpp
-#	cpp_opts = "-E -CC"
-	cpp_opts = "-E"
-	cmdline = "%s %s %s %s %s" % (cpp, get_flags('cflags'), get_flags('cppflags'), cpp_opts, file)
+	cmdline = "%s %s %s %s" % (cpp, get_flags('cflags'), get_flags('cppflags'), file)
 	printc ("magenta", "[CPP] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
 	if ec: die("ERROR %d: %s"%(ec, err))
