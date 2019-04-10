@@ -202,12 +202,15 @@ def scanfile(path, file):
 				for f in files:
 					scanfile( dirname(abspath(f)), basename(f) )
 		elif tag.type == 'LINK' or tag.type == 'LDFLAGS':
+			v_printc ("default", "found RcB2 LINK %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
 				set_flags('ldflags', dep)
 		elif tag.type == 'CFLAGS':
+			v_printc ("default", "found RcB2 CFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
 				set_flags('cflags', dep)
 		elif tag.type == 'CPPFLAGS':
+			v_printc ("default", "found RcB2 CPPFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
 				set_flags('cppflags', dep)
 		else:
