@@ -109,6 +109,7 @@ def compile(cmdline):
 	ec, out, err = shellcmd(cmdline)
 	sys.stdout.write(out)
 	if ec: die("ERROR %d: %s"%(ec, err))
+	else: sys.stderr.write(err)
 	return out
 
 def preprocess(file):
