@@ -108,7 +108,14 @@ def compile(cmdline):
 	printc ("magenta", "[CC] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline)
 	sys.stdout.write(out)
-	if ec: die("ERROR %d: %s"%(ec, err))
+	if ec:
+		printc("red", "ERROR: compiler exit status %d\n"%ec, sys.stderr)
+		lines = err.split('\n')
+		for line in lines:
+			col = "default"
+			if 'error:' in line or "undefined reference" in line: col = "red"
+			printc(col, line + '\n', sys.stderr)
+		sys.exit(ec)
 	else: sys.stderr.write(err)
 	return out
 
