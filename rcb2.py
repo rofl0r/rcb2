@@ -123,7 +123,7 @@ def preprocess(file):
 	global cpp
 	cmdline = "%s %s %s %s" % (cpp, get_flags('cflags'), get_flags('cppflags'), file)
 	printc ("magenta", "[CPP] " + cmdline + "\n");
-	ec, out, err = shellcmd(cmdline)
+	ec, out, err = shellcmd(cmdline  + " | grep '^#'")
 	if ec: die("ERROR %d: %s"%(ec, err))
 	return out
 
