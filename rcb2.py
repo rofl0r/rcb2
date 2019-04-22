@@ -236,22 +236,39 @@ def usage():
 	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS"
 	sys.exit(1)
 
+def use_preset(name):
+	base_cflags = '-Wa,--noexecstack'
+	base_ldflags= '-Wl,-z,relro,-z,now -Wl,-z,text'
+	presets={
+		'debug':('-g3 -O0',''),
+		'size':('-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables','-Wl,--gc-sections -s'),
+	}
+	set_flags('cflags',  base_cflags)
+	set_flags('ldflags', base_ldflags)
+	if name not in presets:
+		printc("yellow", "warning: preset %s not found\n"%name)
+	else:
+		set_flags('cflags',  presets[name][0])
+		set_flags('ldflags', presets[name][1])
+
 def main():
 	nprocs = 1
 	ext = ''
 	global verbose
 	global use_color
-	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:vc", [
-		'extension=','verbose', 'nocolor', 'help'
+
+	setup_env()
+
+	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:p:vc", [
+		'extension=', 'preset=', 'verbose', 'nocolor', 'help'
 	])
 	for a,b in optlist:
 		if a == '-v' or a == '--verbose': verbose = True
 		if a == '-c' or a == '--nocolor': use_color = False
-		if a == '-e' or a == '--extension': ext = b
+		if a == '-c' or a == '--nocolor': use_color = False
+		if a == '-p' or a == '--preset': use_preset(b)
 		if a == '--help': usage()
 		if a == '-j' : nprocs = int(b)
-
-	setup_env()
 
 	mainfile = args[0]
 
