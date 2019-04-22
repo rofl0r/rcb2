@@ -1,38 +1,140 @@
 #!/usr/bin/python2
 
 import sys, os, subprocess, glob, collections, getopt
+import multiprocessing as mu, Queue, time
+from multiprocessing.managers import BaseManager, DictProxy
 
-# global vars
+class JobPool():
+	def proc_wrapper(self):
+		while 1:
+			job = self.getjob()
+			if job is None: break
+			try:
+				if self.func(self, job, self.args):
+					self.donejob()
+				else:
+					break
+			except KeyboardInterrupt:
+				break
+
+	def start(self):
+		for x in xrange(self.nprocs):
+			p = mu.Process(target=self.proc_wrapper, args=())
+			p.start()
+			self.procs.append(p)
+
+	def __init__(self, nprocs, func, args=None):
+		self.nprocs = nprocs
+		self.func = func
+		self.args = args
+		self.procs = []
+		self.jobqueue = mu.Queue()
+
+		self.jobs_count_lock = mu.Lock()
+		self.jobs_total = mu.Value('i', 0, lock=False) #, lock=jobs_count_lock)
+		self.jobs_done = mu.Value('i', 0, lock=False) #, lock=jobs_count_lock)
+
+		self.want_quit = mu.Value('i', 0)
+
+	def addjob(self, job):
+		q = self.jobqueue
+		q.put(job)
+		self.jobs_count_lock.acquire()
+		self.jobs_total.value += 1
+		self.jobs_count_lock.release()
+	def getjob(self):
+		while 1:
+			if self.finished() or self.want_quit.value > 0: return None
+			try:
+				res = self.jobqueue.get_nowait()
+				return res
+			except Queue.Empty:
+				time.sleep(0.0001)
+			except KeyboardInterrupt:
+				return None
+	def donejob(self):
+		self.jobs_count_lock.acquire()
+		self.jobs_done.value += 1
+		self.jobs_count_lock.release()
+
+	def finished(self):
+		#print "%d %d"%(self.jobs_total.value,  self.jobs_done.value)
+		result = False
+		self.jobs_count_lock.acquire()
+		if self.jobs_done.value > 0 and self.jobs_total.value == self.jobs_done.value: result = True
+		self.jobs_count_lock.release()
+		return result
+
+	def step(self):
+		if self.finished(): return False
+		time.sleep(0.0001)
+		return True
+	def terminate(self):
+		self.want_quit.value = 1
+		time.sleep(0.0001)
+		for p in self.procs:
+			if p.is_alive(): p.terminate()
+		for p in self.procs: p.join()
+		self.procs = None
+
+def procfunc(pool, job, args):
+	G = args
+	scanfile(G, dirname(abspath(job)), basename(job) )
+	return True
+
+class ODManager(BaseManager): pass
+ODManager.register('OrderedDict', collections.OrderedDict, DictProxy)
+ODManager.register('Dict', dict, DictProxy)
 verbose = False
 use_color = True
-cc = 'cc'
-cpp = 'cc -E'
-cdeps = dict()
-flags_dict = dict()
-def get_flags(name):
-	dic = flags_dict[name]
-	s = ''
-	for v in dic.keys():
-		s += v + ' '
-	return s
 
-def set_flags(name, flag):
-	dic = flags_dict[name]
-	dic[flag] = True
+class StateManager():
+	def __init__(self):
+		m = ODManager()
+		m.start()
+		self.m = m
+		self.flags_dict = m.Dict()
+		self.cdeps = m.Dict()
+		self.cc = 'cc'
+		self.cpp = 'cc -E'
+		self.setup_env()
+		try:
+			nproc = mu.cpu_count()
+		except NotImplementedError:
+			nproc = 1
+		self.pool = JobPool(nproc, procfunc, self)
 
-def init_flags(name):
-	flags_dict[name] = collections.OrderedDict()
+	def get_flags(self, name):
+		dic = self.flags_dict[name]
+		s = ''
+		for v in dic.keys():
+			s += v + ' '
+		return s
 
-def setup_env():
-	for f in ['cflags', 'cppflags', 'ldflags']:
-		init_flags(f)
-		bigf = f.upper()
-		if bigf in os.environ: set_flags(f, os.environ[bigf])
-	global cc
-	global cpp
-	if 'CC' in os.environ: cc = os.environ['CC']
-	if 'CPP' in os.environ:	cpp = os.environ['CPP']
-	else: cpp = "%s -E"%cc
+	def add_cdep(self, dep):
+		dic = self.cdeps
+		if dep in dic: return False
+		dic[dep] = True
+		self.cdeps = dic
+		self.pool.addjob(dep)
+		return True
+
+	def set_flags(self, name, flag):
+		dic = self.flags_dict[name]
+		dic[flag] = True
+		self.flags_dict[name] = dic
+
+	def init_flags(self, name):
+		self.flags_dict[name] = self.m.OrderedDict()
+
+	def setup_env(self):
+		for f in ['cflags', 'cppflags', 'ldflags']:
+			self.init_flags(f)
+			bigf = f.upper()
+			if bigf in os.environ: self.set_flags(f, os.environ[bigf])
+		if 'CC' in os.environ: self.cc = os.environ['CC']
+		if 'CPP' in os.environ:	self.cpp = os.environ['CPP']
+		else: self.cpp = "%s -E" % self.cc
 
 def abspath(path):
 	return os.path.abspath(path)
@@ -119,9 +221,8 @@ def compile(cmdline):
 	else: sys.stderr.write(err)
 	return out
 
-def preprocess(file):
-	global cpp
-	cmdline = "%s %s %s %s" % (cpp, get_flags('cflags'), get_flags('cppflags'), file)
+def preprocess(G, file):
+	cmdline = "%s %s %s %s" % (G.cpp, G.get_flags('cflags'), G.get_flags('cppflags'), file)
 	printc ("magenta", "[CPP] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline  + " | grep '^#'")
 	if ec: die("ERROR %d: %s"%(ec, err))
@@ -186,12 +287,10 @@ def isnumeric(s):
 		if not x in "0123456789": return False
 	return True
 
-def scanfile(path, file):
+def scanfile(G, path, file):
 	self = "%s/%s"%(path, file)
-	if self in cdeps: return
-	cdeps[self] = True
 	v_printc ("default", "scanfile: %s\n" % self)
-	pp = preprocess(self)
+	pp = preprocess(G, self)
 	curr_cpp_file = ''
 	for line in pp.split('\n'):
 		if len(line) >= 2 and line[0] == '#' and line[1] == ' ':
@@ -207,19 +306,19 @@ def scanfile(path, file):
 				v_printc ("default", "found RcB2 DEP %s -> %s\n"%(self, dest))
 				files = glob.glob(dest)
 				for f in files:
-					scanfile( dirname(abspath(f)), basename(f) )
+					G.add_cdep(abspath(f))
 		elif tag.type == 'LINK' or tag.type == 'LDFLAGS':
 			v_printc ("default", "found RcB2 LINK %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				set_flags('ldflags', dep)
+				G.set_flags('ldflags', dep)
 		elif tag.type == 'CFLAGS':
 			v_printc ("default", "found RcB2 CFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				set_flags('cflags', dep)
+				G.set_flags('cflags', dep)
 		elif tag.type == 'CPPFLAGS':
 			v_printc ("default", "found RcB2 CPPFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				set_flags('cppflags', dep)
+				G.set_flags('cppflags', dep)
 		else:
 			printc ("yellow", "warning: unknown tag %s found in %s\n"%(tag.type, curr_cpp_file))
 
@@ -236,28 +335,28 @@ def usage():
 	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS"
 	sys.exit(1)
 
-def use_preset(name):
+def use_preset(G, name):
 	base_cflags = '-Wa,--noexecstack'
 	base_ldflags= '-Wl,-z,relro,-z,now -Wl,-z,text'
 	presets={
 		'debug':('-g3 -O0',''),
 		'size':('-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables','-Wl,--gc-sections -s'),
 	}
-	set_flags('cflags',  base_cflags)
-	set_flags('ldflags', base_ldflags)
+	G.set_flags('cflags',  base_cflags)
+	G.set_flags('ldflags', base_ldflags)
 	if name not in presets:
 		printc("yellow", "warning: preset %s not found\n"%name)
 	else:
-		set_flags('cflags',  presets[name][0])
-		set_flags('ldflags', presets[name][1])
+		G.set_flags('cflags',  presets[name][0])
+		G.set_flags('ldflags', presets[name][1])
 
 def main():
-	nprocs = 1
-	ext = ''
 	global verbose
 	global use_color
+	nprocs = 1
+	ext = ''
 
-	setup_env()
+	G = StateManager()
 
 	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:p:vc", [
 		'extension=', 'preset=', 'verbose', 'nocolor', 'help'
@@ -266,7 +365,7 @@ def main():
 		if a == '-v' or a == '--verbose': verbose = True
 		if a == '-c' or a == '--nocolor': use_color = False
 		if a == '-c' or a == '--nocolor': use_color = False
-		if a == '-p' or a == '--preset': use_preset(b)
+		if a == '-p' or a == '--preset': use_preset(G, b)
 		if a == '--help': usage()
 		if a == '-j' : nprocs = int(b)
 
@@ -276,30 +375,40 @@ def main():
 	bin = cnd + ext
 
 	printc ("blue",  "[RcB2] scanning deps...\n")
+	G.add_cdep(abspath(mainfile))
 
-	scanfile( dirname(abspath(mainfile)), basename(mainfile) );
+	#G.pool.addjob(abspath(mainfile))
+	G.pool.start()
+
+	while 1:
+		try:
+			if not G.pool.step(): break
+		except KeyboardInterrupt():
+			break
+
+	G.pool.terminate()
 
 	printc ("green",  "done\n")
 
 	filelist = []
 	basedir = dirname(abspath(mainfile))
-	for dep in cdeps.keys():
+	for dep in G.cdeps.keys():
 		filelist.append(make_relative(basedir, dep))
 
 	if nprocs == 1: # direct build
-		cmdline = "%s %s %s " % (cc, get_flags('cppflags'), get_flags('cflags'))
+		cmdline = "%s %s %s " % (G.cc, G.get_flags('cppflags'), G.get_flags('cflags'))
 
 		for dep in filelist:
 			cmdline += "%s "%dep
 
-		cmdline += "-o %s %s" % (bin, get_flags('ldflags'))
+		cmdline += "-o %s %s" % (bin, G.get_flags('ldflags'))
 
 		compile(cmdline)
 	else:
-		make(bin, filelist, nprocs)
+		make(G, bin, filelist, nprocs)
 
 
-def make(bin, files, nprocs):
+def make(G, bin, files, nprocs):
 	make_template = """
 prefix = /usr/local
 bindir = $(prefix)/bin
@@ -334,10 +443,10 @@ $(PROG): $(OBJS)
 """
 	make_template = make_template.replace('@PROG@', bin)
 	make_template = make_template.replace('@SRCS@', " \\\n\t".join(files))
-	make_template = make_template.replace('@LIBS@', get_flags('ldflags'))
-	make_template = make_template.replace('@LDFLAGS@', get_flags('ldflags'))
-	make_template = make_template.replace('@CFLAGS@', get_flags('cflags'))
-	make_template = make_template.replace('@CPPFLAGS@', get_flags('cppflags'))
+	make_template = make_template.replace('@LIBS@', G.get_flags('ldflags'))
+	make_template = make_template.replace('@LDFLAGS@', G.get_flags('ldflags'))
+	make_template = make_template.replace('@CFLAGS@', G.get_flags('cflags'))
+	make_template = make_template.replace('@CPPFLAGS@', G.get_flags('cppflags'))
 
 	with open("rcb.mak", "w") as h:
 		h.write(make_template)
