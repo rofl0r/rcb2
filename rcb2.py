@@ -120,14 +120,17 @@ class StateManager():
 		self.pool.addjob(dep)
 		return True
 
+	# return whether flag was already set
 	def set_flags(self, name, flag):
 		dic = self.flags_dict[name]
+		if flag in dic: return False
 		dic[flag] = True
 		self.flags_dict[name] = dic
+		return True
 
 	def set_flags_internal(self, name, flag):
 		self.set_flags(name, flag)
-		self.set_flags('internal_' + name, flag)
+		return self.set_flags('internal_' + name, flag)
 
 	def init_flags(self, name):
 		self.flags_dict[name] = self.m.OrderedDict()
@@ -230,9 +233,7 @@ def compile(cmdline):
 def preprocess(G, file):
 	cmdline = "%s %s %s %s" % (G.cpp, G.get_flags('cflags'), G.get_flags('cppflags'), file)
 	printc ("default", "[CPP] " + cmdline + "\n");
-	ec, out, err = shellcmd(cmdline  + " | grep '^#'")
-	if ec: die("ERROR %d: %s"%(ec, err))
-	return out
+	return shellcmd(cmdline)
 
 def strip_file_ext(fn):
 	return fn[:fn.find('.')]
@@ -296,8 +297,9 @@ def isnumeric(s):
 def scanfile(G, path, file):
 	self = "%s/%s"%(path, file)
 	v_printc ("default", "scanfile: %s\n" % self)
-	pp = preprocess(G, self)
+	ec, pp, err = preprocess(G, self)
 	curr_cpp_file = ''
+	got_new_cppflags = False
 	for line in pp.split('\n'):
 		if len(line) >= 2 and line[0] == '#' and line[1] == ' ':
 			tokens = split_tokens(line[2:])
@@ -328,9 +330,15 @@ def scanfile(G, path, file):
 		elif tag.type == 'CPPFLAGS':
 			v_printc ("default", "found RcB2 CPPFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				G.set_flags_internal('cppflags', dep)
+				if G.set_flags_internal('cppflags', dep):
+					got_new_cppflags = True
 		else:
 			printc ("yellow", "warning: unknown tag %s found in %s\n"%(tag.type, curr_cpp_file))
+	if ec and got_new_cppflags:
+		scanfile(G, path, file)
+	elif ec:
+		print "[CPP] %s/%s error %d"%(path, file, ec)
+		sys.stderr.write(err)
 
 def use_preset(G, name):
 	base_cflags = '-Wa,--noexecstack'
