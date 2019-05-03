@@ -223,7 +223,7 @@ def compile(cmdline):
 
 def preprocess(G, file):
 	cmdline = "%s %s %s %s" % (G.cpp, G.get_flags('cflags'), G.get_flags('cppflags'), file)
-	printc ("magenta", "[CPP] " + cmdline + "\n");
+	printc ("default", "[CPP] " + cmdline + "\n");
 	ec, out, err = shellcmd(cmdline  + " | grep '^#'")
 	if ec: die("ERROR %d: %s"%(ec, err))
 	return out
