@@ -437,7 +437,7 @@ def pure_compile(G, bin, filelist):
 	for dep in filelist:
 		cmdline += "%s "%dep
 
-	cmdline += "-o %s %s" % (bin, G.get_flags('ldflags'))
+	cmdline += "-o %s %s %s" % (bin, G.get_flags('libs'), G.get_flags('ldflags'))
 	out = compile(cmdline)
 	if len(out): sys.stdout.write(out)
 	return 0
