@@ -12,6 +12,9 @@ the `main()` function, and `rcb2` figures out which other files are needed.
 Cross-compilation is as simple as using an appropriate `CC` environment
 variable.
 
+For efficiency and to support parallel builds, `rcb2` writes a *GNU make*
+compatible Makefile which it uses subsequently.
+
 ## A small example:
 
 You have a file `main.c` which, depending on some macros, shall use either
@@ -67,7 +70,16 @@ If a file (typically a header) requires some other files, you add a
 All path components need to be relative to the file containing the pragma.
 
 If a .c file requires certain CFLAGS for compilation, e.g. `-std=c99`, you can
-add `#pragma RcB2 CFLAGS "-std=c99"`.
+add `#pragma RcB2 CFLAGS "-std=c99"`. Note that this should be used really
+sparingly, since it will be applied to **all** files in the build, and it can
+unexpectedly break compilation for some files or on some systems:
+For example on some BSDs, using `-std=c99` automatically enables a strict mode
+which deselects certain useful POSIX, XSI and GNU features, like *strdup()* etc.
+
+Use `#pragma RcB2 CPPFLAGS "-DFOO" "-I.."` if you need some macros or include
+paths to be enabled across compilation units.
+Here again, usage will be applied to **all** files, so adding e.g. `-I..` may
+have unintended consequences if you use several libraries.
 
 Likewise, if a certain library is needed, e.g. `-lncurses` and `-lm`, you
 declare it like so: `#pragma RcB2 LINK "-lncurses" "-lm"`.
@@ -75,7 +87,12 @@ declare it like so: `#pragma RcB2 LINK "-lncurses" "-lm"`.
 note that you could stuff both `-l` directives into the same set of double
 quotes, and it would work, but it is advised to specify each library separately.
 RcB2 drops duplicates to keep the compiler command line as short as possible.
-The `LINK` directive is an alias for `LDFLAGS`.
+The `LINK` directive should only be used for libraries, there's an `LDFLAGS`
+directive that can be used for other necessary linker flags.
+
+`CPPFLAGS`, `CFLAGS`, `LINK (LIBS)` and `LDFLAGS` derived via RcB2 pragmas
+are considered essential for a working build and hardcoded into the resulting
+Makefile, unlike environment vars or presets used for compilation.
 
 The pragmas can be put between preprocessor `#if`s and `#ifdef`s.
 Only those that survive the preprocessor pass are being picked up.
@@ -84,7 +101,8 @@ After all headers have the dependencies on the .c files they depend on properly
 documented, it's sufficient to simply include a header, and run `rcb2` on the
 file, and it will pick up all files required instantly.
 
-By default, `rcb2` throws all .c files onto the compiler in a single pass.
+`rcb2` has a `--pure` mode that throws all .c files onto the compiler in
+a single pass.
 This allows to use CFLAGS like `-fwhole-program` which can very efficiently
 optimize the binary.
 
@@ -95,9 +113,6 @@ using the supplied C/CPPFLAGS, and then parses the `#pragma RcB2` directives
 that survived. All referenced files are then recursively processed in the exact
 same manner, until the complete list is created. As a C preprocessor is a pretty
 simple program, this is a very quick process.
-Currently it is done sequentially, but it could be parallelized relatively
-easily (instead of recursing, one could simply spawn a new thread when a new
-dependency that wasn't processed yet is found).
 
 After the complete list of dependencies is known, they are passed to the
 compiler. That's it.
@@ -105,10 +120,6 @@ compiler. That's it.
 Even though the current version of `rcb2` is written in python, it is really
 quick, and the concept is so simple that it could easily be rewritten in a more
 performant language.
-
-`rcb2` currently supports a `-j N` parameter. if used, instead of compiling the
-required files directly, it writes a GNU make compatible makefile, and executes
-it with `-j N`, speeding up the build.
 
 At this point, all command line parameters are experimental.
 Run `rcb2 --help` to get a full list of options.
