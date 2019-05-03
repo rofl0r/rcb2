@@ -528,9 +528,9 @@ SRCS = @SRCS@
 
 LIBS = @LIBS@
 
-CFLAGS = @CFLAGS@
-CPPFLAGS = @CPPFLAGS@
-LDFLAGS = @LDFLAGS@
+CFLAGS_N = @CFLAGS@
+CPPFLAGS_N = @CPPFLAGS@
+LDFLAGS_N = @LDFLAGS@
 
 OBJS = $(SRCS:.c=.o)
 
@@ -552,13 +552,13 @@ install: $(PROG)
 	install -D -m 755 $(PROG) $(DESTDIR)/$(bindir)/
 
 src: $(SRCS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $ -o $(PROG) $^ $(LDFLAGS) $(LIBS)
+	$(CC) $(CPPFLAGS_N) $(CPPFLAGS) $(CFLAGS_N) $(CFLAGS) -o $(PROG) $^ $(LDFLAGS_N) $(LDFLAGS) $(LIBS)
 
 %.o: %.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS_N) $(CPPFLAGS) $(CFLAGS_N) $(CFLAGS) -c -o $@ $<
 
 $(PROG): $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
+	$(CC) $(CFLAGS_N) $(CFLAGS) $(LDFLAGS_N) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 
 .PHONY: all clean rebuild install src
 """
