@@ -1,6 +1,6 @@
 #!/usr/bin/python2
 
-import sys, os, subprocess, glob, collections, getopt
+import sys, os, subprocess, glob, collections, getopt, re
 import multiprocessing as mu, Queue, time
 from multiprocessing.managers import BaseManager, DictProxy
 
@@ -87,6 +87,7 @@ ODManager.register('OrderedDict', collections.OrderedDict, DictProxy)
 ODManager.register('Dict', dict, DictProxy)
 verbose = False
 use_color = True
+nm = os.environ['NM'] if 'NM' in os.environ else 'nm'
 
 class StateManager():
 	def __init__(self):
@@ -124,14 +125,19 @@ class StateManager():
 		dic[flag] = True
 		self.flags_dict[name] = dic
 
+	def set_flags_internal(self, name, flag):
+		self.set_flags(name, flag)
+		self.set_flags('internal_' + name, flag)
+
 	def init_flags(self, name):
 		self.flags_dict[name] = self.m.OrderedDict()
 
 	def setup_env(self):
-		for f in ['cflags', 'cppflags', 'ldflags']:
+		for f in ['cflags', 'cppflags', 'ldflags', 'libs']:
 			self.init_flags(f)
 			bigf = f.upper()
 			if bigf in os.environ: self.set_flags(f, os.environ[bigf])
+			self.init_flags('internal_' + f)
 		if 'CC' in os.environ: self.cc = os.environ['CC']
 		if 'CPP' in os.environ:	self.cpp = os.environ['CPP']
 		else: self.cpp = "%s -E" % self.cc
@@ -307,40 +313,33 @@ def scanfile(G, path, file):
 				files = glob.glob(dest)
 				for f in files:
 					G.add_cdep(abspath(f))
-		elif tag.type == 'LINK' or tag.type == 'LDFLAGS':
+		elif tag.type == 'LINK':
 			v_printc ("default", "found RcB2 LINK %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				G.set_flags('ldflags', dep)
+				G.set_flags_internal('libs', dep)
+		elif tag.type == 'LDFLAGS':
+			v_printc ("default", "found RcB2 LDFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
+			for dep in tag.vals:
+				G.set_flags_internal('ldflags', dep)
 		elif tag.type == 'CFLAGS':
 			v_printc ("default", "found RcB2 CFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				G.set_flags('cflags', dep)
+				G.set_flags_internal('cflags', dep)
 		elif tag.type == 'CPPFLAGS':
 			v_printc ("default", "found RcB2 CPPFLAGS %s in %s\n"%(repr(tag.vals), curr_cpp_file))
 			for dep in tag.vals:
-				G.set_flags('cppflags', dep)
+				G.set_flags_internal('cppflags', dep)
 		else:
 			printc ("yellow", "warning: unknown tag %s found in %s\n"%(tag.type, curr_cpp_file))
-
-def usage():
-	print "%s [options] file.c"%sys.argv[0]
-	print "builds file.c"
-	print "options:"
-	print "-v/--verbose: verbose output"
-	print "-c/--nocolor: do not use colors"
-	print "-e/--extension EXT: file extension EXT for the generated binary"
-	print "-j N: write a makefile and build with N parallel jobs"
-	print
-	print "influential environment vars:"
-	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS"
-	sys.exit(1)
 
 def use_preset(G, name):
 	base_cflags = '-Wa,--noexecstack'
 	base_ldflags= '-Wl,-z,relro,-z,now -Wl,-z,text'
 	presets={
 		'debug':('-g3 -O0',''),
-		'size':('-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables','-Wl,--gc-sections -s'),
+		'test':('-g0 -O0',''),
+		'size':('-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer','-Wl,--gc-sections -s'),
+		'whopr':('-Os -flto -fwhole-program -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer','-flto -s'),
 	}
 	G.set_flags('cflags',  base_cflags)
 	G.set_flags('ldflags', base_ldflags)
@@ -350,34 +349,11 @@ def use_preset(G, name):
 		G.set_flags('cflags',  presets[name][0])
 		G.set_flags('ldflags', presets[name][1])
 
-def main():
-	global verbose
-	global use_color
-	nprocs = 1
-	ext = ''
-
-	G = StateManager()
-
-	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:p:vc", [
-		'extension=', 'preset=', 'verbose', 'nocolor', 'help'
-	])
-	for a,b in optlist:
-		if a == '-v' or a == '--verbose': verbose = True
-		if a == '-c' or a == '--nocolor': use_color = False
-		if a == '-c' or a == '--nocolor': use_color = False
-		if a == '-p' or a == '--preset': use_preset(G, b)
-		if a == '--help': usage()
-		if a == '-j' : nprocs = int(b)
-
-	mainfile = args[0]
-
-	cnd = strip_file_ext(basename(mainfile))
-	bin = cnd + ext
-
+def rcb_scan(G, mainfile):
 	printc ("blue",  "[RcB2] scanning deps...\n")
+
 	G.add_cdep(abspath(mainfile))
 
-	#G.pool.addjob(abspath(mainfile))
 	G.pool.start()
 
 	while 1:
@@ -388,28 +364,162 @@ def main():
 
 	G.pool.terminate()
 
-	printc ("green",  "done\n")
-
 	filelist = []
 	basedir = dirname(abspath(mainfile))
 	for dep in G.cdeps.keys():
 		filelist.append(make_relative(basedir, dep))
+	return filelist
 
-	if nprocs == 1: # direct build
-		cmdline = "%s %s %s " % (G.cc, G.get_flags('cppflags'), G.get_flags('cflags'))
+# T: function defined
+# U: undefined sym
+# C: uninit. data sym defined in obj
+# B: uninit. data sym defined in binary
+# D: init. data sym defined in obj/binary
+# R: r/o (const) data sym defined in obj/binary
+def get_object_syms(obj, symtypes='T'):
+	ec, out, err = shellcmd('%s %s'%(nm, obj))
+	if ec:
+		sys.stderr.write(err)
+		return None
+	rex = re.compile('([0-9a-f]+|[ ]+) ([%s]) (.*)'%symtypes)
+	syms = {}
+	for letter in symtypes:
+		syms[letter] = {}
+	lines = out.split('\n')
+	for line in lines:
+		m = rex.match(line)
+		if not m: continue
+		addr, letter, sym = m.groups(0)
+		syms[letter][sym] = int(addr, 16) if letter != 'U' else -1
+	return syms
 
-		for dep in filelist:
-			cmdline += "%s "%dep
+def fold_dicts(dick, wantedkeys):
+	ret = {}
+	for x in wantedkeys:
+		if not x in dick: continue
+		for y in dick[x].keys(): ret[y] = dick[x][y]
+	return ret
 
-		cmdline += "-o %s %s" % (bin, G.get_flags('ldflags'))
+def find_sym(symname, objsyms):
+	for obj in objsyms.keys():
+		if 'used' in objsyms[obj]: continue
+		if 'got' in objsyms[obj] and symname in objsyms[obj]['got']:
+			objsyms[obj]['used'] = True
+			for needed in objsyms[obj]['needed']:
+				find_sym(needed, objsyms)
 
-		compile(cmdline)
-	else:
-		make(G, bin, filelist, nprocs)
+# this requires that the objs are built with debug syms on
+# and optimally no optimization
+def get_used_object_files(objfilelist):
+	objsyms = dict()
+	for obj in objfilelist:
+		syms = get_object_syms(obj, 'UTCDR')
+		if syms is None: return None
+		osyms = {}
+		osyms['needed'] = fold_dicts(syms, 'U')
+		osyms['got'] = fold_dicts(syms, 'TCDR')
+		objsyms[obj] = osyms
+	find_sym('main', objsyms)
+	used = []
+	for obj in objfilelist:
+		if 'used' in objsyms[obj]: used.append(obj)
+	return used
+
+def optimize_dependencies(filelist):
+	objfl = map(lambda x : re.sub(r"\.c$", ".o", x), filelist)
+	filelist = get_used_object_files(objfl)
+	if filelist is None: return None
+	return map(lambda x : re.sub(r"\.o$", ".c", x), filelist)
+
+def pure_compile(G, bin, filelist):
+	cmdline = "%s %s %s " % (G.cc, G.get_flags('cppflags'), G.get_flags('cflags'))
+
+	for dep in filelist:
+		cmdline += "%s "%dep
+
+	cmdline += "-o %s %s" % (bin, G.get_flags('ldflags'))
+	out = compile(cmdline)
+	if len(out): sys.stdout.write(out)
+	return 0
+
+def usage():
+	print "%s [options] file.c"%sys.argv[0]
+	print "builds file.c"
+	print "options:"
+	print "-v/--verbose: verbose output"
+	print "-e/--extension EXT: file extension EXT for the generated binary"
+	print "-j N: build with N parallel jobs"
+	print "-f/--force: forces rescan and new Makefile written"
+	print "-p/--preset: use CFLAGS preset [debug/size/test]"
+	print "--static: add --static to LDFLAGS"
+	print "--nocolor: do not use colors"
+	print "--pure: do not use Makefiles"
+	print
+	print "influential environment vars:"
+	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS, NM"
+	print "if crosscompiling, CC and NM need to be prefixed with the target triplet"
+	sys.exit(1)
+
+def main():
+	global verbose
+	global use_color
+	nprocs = 1
+	ext = ''
+	use_force, pure = False, False
+
+	G = StateManager()
+
+	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:p:fv", [
+		'extension=', 'preset=', 'static',
+		'verbose', 'nocolor', 'force', 'pure', 'help'
+	])
+	for a,b in optlist:
+		if a == '-v' or a == '--verbose': verbose = True
+		if a == '--nocolor': use_color = False
+		if a == '-p' or a == '--preset': use_preset(G, b)
+		if a == '-f' or a == '--force': use_force = True
+		if a == '--help': usage()
+		if a == '--pure': pure = True
+		if a == '--static': G.set_flags('ldflags', '--static')
+		if a == '-j' : nprocs = int(b)
+
+	mainfile = args.pop(0)
+	if not len(args): args.append('all')
+
+	cnd = strip_file_ext(basename(mainfile))
+	bin = cnd + ext
+	makefile = 'rcb.%s.mak'% cnd
+
+	if not os.path.exists(makefile) or use_force or pure:
+
+		filelist = rcb_scan(G, mainfile)
+		if pure: return pure_compile(G, bin, filelist)
+
+		write_makefile(G, makefile, bin, filelist)
+		run_makefile(G, makefile, ["clean"], 1, "") and \
+		run_makefile(G, makefile, ["all"], nprocs, "-O0 -g")
+		filelist = optimize_dependencies(filelist)
+		if filelist is None: sys.exit(1)
+		run_makefile(G, makefile, ["clean"], 1, "") and \
+		write_makefile(G, makefile, bin, filelist)
+
+	run_makefile(G, makefile, args, nprocs)
+
+def sys_cmd(cmd):
+	print cmd
+	return not os.system(cmd)
+
+def run_makefile(G, makefile, args, nprocs, cflags=None, cppflags=None, ldflags=None):
+	#ec, out, err = shellcmd(cmdline)
+	my_cflags = cflags if cflags else G.get_flags('cflags')
+	my_cppflags = cppflags if cppflags else G.get_flags('cppflags')
+	my_ldflags = ldflags if ldflags else G.get_flags('ldflags')
+	return sys_cmd("make -f %s -j %d CFLAGS=\"%s\" CPPFLAGS=\"%s\" LDFLAGS=\"%s\" %s" \
+		% (makefile, nprocs, my_cflags, my_cppflags, my_ldflags, ' '.join(args)))
 
 
-def make(G, bin, files, nprocs):
-	make_template = """
+def write_makefile(G, makefile, bin, files):
+	make_template = """#Makefile autogenerated by RcB2
 prefix = /usr/local
 bindir = $(prefix)/bin
 
@@ -417,43 +527,50 @@ PROG = @PROG@
 SRCS = @SRCS@
 
 LIBS = @LIBS@
-OBJS = $(SRCS:.c=.o)
 
 CFLAGS = @CFLAGS@
+CPPFLAGS = @CPPFLAGS@
+LDFLAGS = @LDFLAGS@
+
+OBJS = $(SRCS:.c=.o)
+
+MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
 -include config.mak
 
 all: $(PROG)
 
-install: $(PROG)
-	install -d $(DESTDIR)/$(bindir)
-	install -D -m 755 $(PROG) $(DESTDIR)/$(bindir)/
-
 clean:
 	rm -f $(PROG)
 	rm -f $(OBJS)
 
+rebuild:
+	$(MAKE) -f $(MAKEFILE) clean && $(MAKE) -f $(MAKEFILE) all
+
+install: $(PROG)
+	install -d $(DESTDIR)/$(bindir)
+	install -D -m 755 $(PROG) $(DESTDIR)/$(bindir)/
+
+src: $(SRCS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $ -o $(PROG) $^ $(LDFLAGS) $(LIBS)
+
 %.o: %.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) $(PIC) -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 $(PROG): $(OBJS)
-	$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 
-.PHONY: all clean install
+.PHONY: all clean rebuild install src
 """
 	make_template = make_template.replace('@PROG@', bin)
 	make_template = make_template.replace('@SRCS@', " \\\n\t".join(files))
-	make_template = make_template.replace('@LIBS@', G.get_flags('ldflags'))
-	make_template = make_template.replace('@LDFLAGS@', G.get_flags('ldflags'))
-	make_template = make_template.replace('@CFLAGS@', G.get_flags('cflags'))
-	make_template = make_template.replace('@CPPFLAGS@', G.get_flags('cppflags'))
+	make_template = make_template.replace('@LIBS@', G.get_flags('internal_libs'))
+	make_template = make_template.replace('@LDFLAGS@', G.get_flags('internal_ldflags'))
+	make_template = make_template.replace('@CFLAGS@', G.get_flags('internal_cflags'))
+	make_template = make_template.replace('@CPPFLAGS@', G.get_flags('internal_cppflags'))
 
-	with open("rcb.mak", "w") as h:
+	with open(makefile, "w") as h:
 		h.write(make_template)
-
-	#ec, out, err = shellcmd(cmdline)
-	os.system("make -f rcb.mak -j %d" % nprocs)
-
 
 if __name__ == '__main__':
 	main()
