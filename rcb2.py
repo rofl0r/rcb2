@@ -346,6 +346,8 @@ def use_preset(G, name):
 	presets={
 		'debug':('-g3 -O0',''),
 		'test':('-g0 -O0',''),
+		'speed':('-g0 -O3 -fomit-frame-pointer -flto','-flto'),
+		'speeddebug':('-g3 -O3 -fomit-frame-pointer',''),
 		'size':('-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer','-Wl,--gc-sections -s'),
 		'whopr':('-Os -flto -fwhole-program -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-frame-pointer','-flto -s'),
 	}
