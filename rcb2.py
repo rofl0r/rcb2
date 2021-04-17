@@ -519,13 +519,22 @@ def sys_cmd(cmd):
 	print cmd
 	return not os.system(cmd)
 
+def flag_string(flag, contents):
+	if not contents: return ""
+	return "%s=\"%s\""%(flag, contents);
+
 def run_makefile(G, makefile, args, nprocs, cflags=None, cppflags=None, ldflags=None):
 	#ec, out, err = shellcmd(cmdline)
-	my_cflags = cflags if cflags else G.get_flags('cflags')
+	my_cflags = G.get_flags('cflags')
+	my_rcbcflags = cflags if cflags else ""
 	my_cppflags = cppflags if cppflags else G.get_flags('cppflags')
 	my_ldflags = ldflags if ldflags else G.get_flags('ldflags')
-	return sys_cmd("make -f %s -j %d CFLAGS=\"%s\" CPPFLAGS=\"%s\" LDFLAGS=\"%s\" %s" \
-		% (makefile, nprocs, my_cflags, my_cppflags, my_ldflags, ' '.join(args)))
+	my_cflags = flag_string("CFLAGS", my_cflags);
+	my_cppflags = flag_string("CPPFLAGS", my_cppflags);
+	my_ldflags = flag_string("LDFLAGS", my_ldflags);
+	my_rcbcflags = flag_string("CFLAGS_RCB", my_rcbcflags);
+	return sys_cmd("make -f %s -j %d %s %s %s %s %s" \
+		% (makefile, nprocs, my_cflags, my_cppflags, my_ldflags, my_rcbcflags, ' '.join(args)))
 
 
 def write_makefile(G, makefile, bin, files):
@@ -565,7 +574,7 @@ src: $(SRCS)
 	$(CC) $(CPPFLAGS_N) $(CPPFLAGS) $(CFLAGS_N) $(CFLAGS) -o $(PROG) $^ $(LDFLAGS_N) $(LDFLAGS) $(LIBS)
 
 %.o: %.c
-	$(CC) $(CPPFLAGS_N) $(CPPFLAGS) $(CFLAGS_N) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS_N) $(CPPFLAGS) $(CFLAGS_N) $(CFLAGS) $(CFLAGS_RCB) -c -o $@ $<
 
 $(PROG): $(OBJS)
 	$(CC) $(CFLAGS_N) $(CFLAGS) $(LDFLAGS_N) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
