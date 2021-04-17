@@ -474,7 +474,7 @@ def usage(makemode):
 	print( "options:")
 	print( "-v/--verbose: verbose output")
 	print( "-e/--extension EXT: file extension EXT for the generated binary")
-	print( "-p/--preset: use CFLAGS preset [debug/size/test]")
+	print( "-p/--preset: use CFLAGS preset [debug/size/test/speed/speeddebug/whopr]")
 	if makemode: print('-o/--output FN: write Makefile to FN')
 	print( "--static: add --static to LDFLAGS")
 	print( "--nocolor: do not use colors")
