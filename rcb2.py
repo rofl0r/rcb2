@@ -13,6 +13,7 @@ class JobPool():
 				if self.func(self, job, self.args):
 					self.donejob()
 				else:
+					self.abort()
 					break
 			except KeyboardInterrupt:
 				break
@@ -35,6 +36,7 @@ class JobPool():
 		self.jobs_done = mu.Value('i', 0, lock=False) #, lock=jobs_count_lock)
 
 		self.want_quit = mu.Value('i', 0)
+		self.return_value = mu.Value('i', 0)
 
 	def addjob(self, job):
 		q = self.jobqueue
@@ -58,6 +60,8 @@ class JobPool():
 		self.jobs_count_lock.release()
 
 	def finished(self):
+		if self.want_quit.value == 1 and self.return_value.value == 1:
+			return True
 		#print "%d %d"%(self.jobs_total.value,  self.jobs_done.value)
 		result = False
 		self.jobs_count_lock.acquire()
@@ -69,6 +73,11 @@ class JobPool():
 		if self.finished(): return False
 		time.sleep(0.0001)
 		return True
+
+	def abort(self):
+		self.want_quit.value = 1
+		self.return_value.value = 1
+
 	def terminate(self):
 		self.want_quit.value = 1
 		time.sleep(0.0001)
@@ -76,11 +85,11 @@ class JobPool():
 			if p.is_alive(): p.terminate()
 		for p in self.procs: p.join()
 		self.procs = None
+		return self.return_value.value
 
 def procfunc(pool, job, args):
 	G = args
-	scanfile(G, dirname(abspath(job)), basename(job) )
-	return True
+	return scanfile(G, dirname(abspath(job)), basename(job) ) == 0
 
 class ODManager(BaseManager): pass
 ODManager.register('OrderedDict', collections.OrderedDict, DictProxy)
@@ -335,10 +344,12 @@ def scanfile(G, path, file):
 		else:
 			printc ("yellow", "warning: unknown tag %s found in %s\n"%(tag.type, curr_cpp_file))
 	if ec and got_new_cppflags:
-		scanfile(G, path, file)
+		return scanfile(G, path, file)
 	elif ec:
-		print "[CPP] %s/%s error %d"%(path, file, ec)
+		printc ("red", "[CPP] %s/%s error %d\n"%(path, file, ec), sys.stderr)
 		sys.stderr.write(err)
+		return ec
+	return 0
 
 def use_preset(G, name):
 	base_cflags = '-Wa,--noexecstack'
@@ -372,7 +383,8 @@ def rcb_scan(G, mainfile):
 		except KeyboardInterrupt():
 			break
 
-	G.pool.terminate()
+	if G.pool.terminate() != 0:
+		return None
 
 	filelist = []
 	basedir = dirname(abspath(mainfile))
@@ -503,6 +515,9 @@ def main():
 	if not os.path.exists(makefile) or use_force or pure:
 
 		filelist = rcb_scan(G, mainfile)
+		if not filelist:
+			sys.exit(1)
+
 		if pure: return pure_compile(G, bin, filelist)
 
 		write_makefile(G, makefile, bin, filelist)
