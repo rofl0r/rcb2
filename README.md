@@ -12,10 +12,15 @@ the `main()` function, and `rcb2` figures out which other files are needed.
 Cross-compilation is as simple as using an appropriate `CC` environment
 variable.
 
-For efficiency and to support parallel builds, `rcb2` writes a *GNU make*
-compatible Makefile which it uses subsequently.
+`rcb2`, when started as `rcb2make`, writes a *GNU make* compatible Makefile
+which can be used for efficiency and to support parallel builds or to create
+tarballs for distribution which do not require `rcb2` itself.
 
-## A small example:
+`rcb2` itself is parallel and very fast, it basically uses only the C
+preprocessor to figure out which files need to be built, then builds all
+required files in a single compiler call.
+
+## How it works, a small example:
 
 You have a file `main.c` which, depending on some macros, shall use either
 `foo.h` and `foo.c`, or `bar.h` and `bar.c`.
@@ -106,6 +111,17 @@ a single pass.
 This allows to use CFLAGS like `-fwhole-program` which can very efficiently
 optimize the binary.
 
+## Installation
+
+copy `rcb2.py` into a directory in your *PATH* (e.g. /usr/bin) as `rcb2`.
+symlink `rcb2` to `rcb2make` if you also want to use the makefile generator.
+
+you can also simply copy/paste the following snippet into your shell:
+
+    export RCB2DEST=/usr/bin
+    cp rcb2.py "$RCB2DEST"/rcb2
+    ln -sf rcb2 "$RCB2DEST"/rcb2make
+
 ## Implementation & Design
 
 `rcb2` simply runs the C preprocessor on the file passed on the command line,
@@ -117,9 +133,9 @@ simple program, this is a very quick process.
 After the complete list of dependencies is known, they are passed to the
 compiler. That's it.
 
-Even though the current version of `rcb2` is written in python, it is really
+Even though the current version of `rcb2` is written in python2, it is really
 quick, and the concept is so simple that it could easily be rewritten in a more
-performant language.
+performant/portable language such as C.
 
 At this point, all command line parameters are experimental.
 Run `rcb2 --help` to get a full list of options.

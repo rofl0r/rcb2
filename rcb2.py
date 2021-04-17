@@ -97,6 +97,10 @@ ODManager.register('Dict', dict, DictProxy)
 verbose = False
 use_color = True
 nm = os.environ['NM'] if 'NM' in os.environ else 'nm'
+try:
+	hostcpus = mu.cpu_count()
+except NotImplementedError:
+	hostcpus = 1
 
 class StateManager():
 	def __init__(self):
@@ -108,10 +112,7 @@ class StateManager():
 		self.cc = 'cc'
 		self.cpp = 'cc -E'
 		self.setup_env()
-		try:
-			nproc = mu.cpu_count()
-		except NotImplementedError:
-			nproc = 1
+		nproc = hostcpus
 		self.pool = JobPool(nproc, procfunc, self)
 
 	def get_flags(self, name):
@@ -464,71 +465,105 @@ def pure_compile(G, bin, filelist):
 	if len(out): sys.stdout.write(out)
 	return 0
 
-def usage():
-	print "%s [options] file.c"%sys.argv[0]
-	print "builds file.c"
-	print "options:"
-	print "-v/--verbose: verbose output"
-	print "-e/--extension EXT: file extension EXT for the generated binary"
-	print "-j N: build with N parallel jobs"
-	print "-f/--force: forces rescan and new Makefile written"
-	print "-p/--preset: use CFLAGS preset [debug/size/test]"
-	print "--static: add --static to LDFLAGS"
-	print "--nocolor: do not use colors"
-	print "--pure: do not use Makefiles"
-	print
-	print "influential environment vars:"
-	print "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS, NM"
-	print "if crosscompiling, CC and NM need to be prefixed with the target triplet"
+def usage(makemode):
+	print( "%s [options] file.c"%sys.argv[0])
+	if not makemode:
+		print( "builds file.c")
+	else:
+		print( "create optimized makefile for file.c")
+	print( "options:")
+	print( "-v/--verbose: verbose output")
+	print( "-e/--extension EXT: file extension EXT for the generated binary")
+	print( "-p/--preset: use CFLAGS preset [debug/size/test]")
+	if makemode: print('-o/--output FN: write Makefile to FN')
+	print( "--static: add --static to LDFLAGS")
+	print( "--nocolor: do not use colors")
+	print('')
+	print( "influential environment vars:")
+	print( "CC, CPP, CFLAGS, CPPFLAGS, LDFLAGS, NM")
+	print( "if crosscompiling, CC and NM need to be prefixed with the target triplet")
 	sys.exit(1)
 
-def main():
+def parse_args(G, makemode=False):
+	argv = dict()
+	argv['use_force'] = False
+	argv['verbose'] = False
+	argv['use_color'] = True
+	argv['ext'] = ''
+	argv['output'] = ''
+
+	optstr = ":e:p:v" if not makemode else ":e:p:o:v"
+	optlist =  [
+		'extension=', 'preset=', 'static',
+		'verbose', 'nocolor', 'help'
+	]
+	if makemode: optlist.insert(0, "output=")
+
+	optlist, args = getopt.getopt(sys.argv[1:], optstr, optlist)
+
+	for a,b in optlist:
+		if a == '-v' or a == '--verbose': argv['verbose'] = True
+		if a == '--nocolor': argv['use_color'] = False
+		if a == '-p' or a == '--preset': use_preset(G, b)
+		if a == '-e' or a == '--extension': argv['ext'] = b
+		if a == '-o' or a == '--output': argv['output'] = b
+		if a == '--help': usage(makemode)
+		if a == '--static': G.set_flags('ldflags', '--static')
+
+	argv['mainfile'] = args.pop(0)
+	if not len(args): args.append('all')
+	return argv, args
+
+def pure_main():
 	global verbose
 	global use_color
-	nprocs = 1
-	ext = ''
-	use_force, pure = False, False
 
 	G = StateManager()
+	argv, args = parse_args(G)
 
-	optlist, args = getopt.getopt(sys.argv[1:], ":j:e:p:fv", [
-		'extension=', 'preset=', 'static',
-		'verbose', 'nocolor', 'force', 'pure', 'help'
-	])
-	for a,b in optlist:
-		if a == '-v' or a == '--verbose': verbose = True
-		if a == '--nocolor': use_color = False
-		if a == '-p' or a == '--preset': use_preset(G, b)
-		if a == '-f' or a == '--force': use_force = True
-		if a == '--help': usage()
-		if a == '--pure': pure = True
-		if a == '--static': G.set_flags('ldflags', '--static')
-		if a == '-j' : nprocs = int(b)
-
-	mainfile = args.pop(0)
-	if not len(args): args.append('all')
+	verbose = argv['verbose']
+	use_color = argv['use_color']
+	mainfile = argv['mainfile']
 
 	cnd = strip_file_ext(basename(mainfile))
-	bin = cnd + ext
+	bin = cnd + argv['ext']
+
+	filelist = rcb_scan(G, mainfile)
+	if not filelist: sys.exit(1)
+
+	return pure_compile(G, bin, filelist)
+
+def make_main():
+	global verbose
+	global use_color
+
+	G = StateManager()
+	argv, args = parse_args(G, True)
+
+	verbose = argv['verbose']
+	use_color = argv['use_color']
+	mainfile = argv['mainfile']
+
+	cnd = strip_file_ext(basename(mainfile))
+	bin = cnd + argv['ext']
+
 	makefile = 'rcb.%s.mak'% cnd
+	if argv['output'] != '':
+		makefile = argv['output']
 
-	if not os.path.exists(makefile) or use_force or pure:
+	filelist = rcb_scan(G, mainfile)
+	if not filelist:
+		sys.exit(1)
 
-		filelist = rcb_scan(G, mainfile)
-		if not filelist:
-			sys.exit(1)
-
-		if pure: return pure_compile(G, bin, filelist)
-
-		write_makefile(G, makefile, bin, filelist)
-		run_makefile(G, makefile, ["clean"], 1, "") and \
-		run_makefile(G, makefile, ["all"], nprocs, "-O0 -g")
-		filelist = optimize_dependencies(filelist)
-		if filelist is None: sys.exit(1)
-		run_makefile(G, makefile, ["clean"], 1, "") and \
-		write_makefile(G, makefile, bin, filelist)
-
-	run_makefile(G, makefile, args, nprocs)
+	write_makefile(G, makefile, bin, filelist)
+	run_makefile(G, makefile, ["clean"], 1, "") and \
+	run_makefile(G, makefile, ["all"], hostcpus, "-O0 -g")
+	filelist = optimize_dependencies(filelist)
+	if filelist is None: sys.exit(1)
+	#run_makefile(G, makefile, ["clean"], 1, "") and \
+	write_makefile(G, makefile, bin, filelist)
+	printc ("green", "wrote optimized makefile to %s\n"%makefile)
+	return 0
 
 def sys_cmd(cmd):
 	print cmd
@@ -607,4 +642,9 @@ $(PROG): $(OBJS)
 		h.write(make_template)
 
 if __name__ == '__main__':
-	main()
+	fn = basename(sys.argv[0])
+	if fn.startswith('rcb2make'):
+		fn = make_main
+	else:
+		fn = pure_main
+	sys.exit(fn())
